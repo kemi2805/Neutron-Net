@@ -39,7 +39,7 @@ def train_autoencoder(
     autoencoder.compile(optimizer=optimizer, loss=loss_fn, metrics=[metric_fn])
 
     # Build the model with the specified input shape
-    autoencoder.build(input_shape=(1, 256, 256, 3))  # Adjust as needed
+    autoencoder.build(input_shape=(4, 200, 200, 1))  # Adjust as needed
 
     # Define callbacks
     checkpoint_path = "/mnt/rafast/miler/checkpoint.tf"

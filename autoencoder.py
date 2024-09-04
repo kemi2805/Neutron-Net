@@ -1,5 +1,5 @@
 # autoencoder.py
-from keras.models import Model
+from keras.models import Model # type: ignore
 
 from dataclasses import dataclass
 from layers import Encoder, Decoder, DiagonalGaussian
