@@ -6,7 +6,8 @@ from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping, H
 
 from autoencoder import AutoEncoderParams, AutoEncoder
 from training import train_autoencoder, plot_training_curves
-from utils import process_all_eos, plot_grid_data, plot_original_vs_reconstructed_griddata, plot_encoder_filters
+from utils import process_all_eos
+from utils_plot import plot_grid_data, plot_original_vs_reconstructed_griddata, plot_encoder_filters
 import numpy as np
 
 def main():
