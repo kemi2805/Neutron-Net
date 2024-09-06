@@ -42,7 +42,7 @@ def train_autoencoder(
     autoencoder.build(input_shape=(4, 200, 200, 1))  # Adjust as needed
 
     # Define callbacks
-    checkpoint_path = "/mnt/rafast/miler/checkpoint.tf"
+    checkpoint_path = "/mnt/rafast/miler/checkpoint_300.tf"
     checkpoint_callback = ModelCheckpoint(filepath=checkpoint_path, save_best_only=True, verbose=1)
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_delta=0.001)
     early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)

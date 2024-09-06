@@ -368,7 +368,7 @@ def plot_encoder_filters(
 
     # Normalize the encoded output for better visualization
     encoded_output = (encoded_output - encoded_output.min()) / (encoded_output.max() - encoded_output.min())
-
+    print("-------------------------\nBis hier")
     for i in range(num_samples):
         for j in range(grid_size):
             ax = axes[i, j]
