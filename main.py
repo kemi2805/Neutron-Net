@@ -77,7 +77,6 @@ def plot_data():
     autoencoder = AutoEncoder(params=params)
 
     checkpoint_path = "/mnt/rafast/miler/checkpoint_300.tf"
-    train_data, val_data = load_random_data((256,256,3),100,20)
     data = np.load("/mnt/rafast/miler/grid_array.npy")
     data = data.reshape(data.shape[0],200,200,1)
     
