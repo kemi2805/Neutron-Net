@@ -10,7 +10,6 @@ def get_noise(
         num_samples: int,
         height: int,
         width: int,
-        device: str, 
         dtype: tf.dtypes.DType,
         seed: int
 ) -> tf.Tensor:
@@ -20,7 +19,6 @@ def get_noise(
         num_samples (int): Number of samples (batch size).
         height (int): Height of the noise tensor.
         width (int): Width of the noise tensor.
-        device (str): The device to place the tensor on (e.g., 'cpu:0' or 'gpu:0').
         dtype (tf.dtypes.DType): The data type of the tensor (e.g., tf.float32).
         seed (int): Seed for random number generation.
 
@@ -40,9 +38,7 @@ def get_noise(
         seed=seed
     )
 
-    # Ensure the tensor is placed on the correct device
-    with tf.device(device):
-        return noise
+    return noise
     
 def time_shift(mu: float, sigma: float, t: tf.Tensor) -> tf.Tensor:
     """Applies a time shift to the tensor t based on mu and sigma.
@@ -83,6 +79,30 @@ def get_linear_function(
     
     return linear_function
 
+def get_cosine_function(
+        x1: float = 256, 
+        y1: float = 0.5, 
+        x2: float = 4096, 
+        y2: float = 1.15
+) -> Callable[[float], float]:
+    """Generate a cosine interpolation function that maps x to y based on two points.
+
+    Args:
+        x1 (float): x-coordinate of the first point.
+        y1 (float): y-coordinate of the first point.
+        x2 (float): x-coordinate of the second point.
+        y2 (float): y-coordinate of the second point.
+
+    Returns:
+        Callable[[float], float]: A function that computes the cosine interpolation.
+    """
+    def cosine_function(x: float) -> float:
+        # Normalize x between x1 and x2
+        normalized_x = (x - x1) / (x2 - x1)
+        # Apply the cosine interpolation
+        return y1 + (y2 - y1) / 2 * (1 - math.cos(math.pi * normalized_x))
+    
+    return cosine_function
 
 
 def get_schedule(
@@ -164,6 +184,7 @@ def denoise(
 
 
 
+# Eher nicht anwendbar für mich
 def unpack(x: tf.Tensor, height: int, width: int) -> tf.Tensor:
     """Unpacks and reshapes a tensor based on height and width parameters.
 
@@ -187,8 +208,8 @@ def unpack(x: tf.Tensor, height: int, width: int) -> tf.Tensor:
     # Transpose the tensor to prepare for reshaping to height and width
     unpacked = tf.transpose(reshaped_x, perm=[0, 2, 1])
 
-    # Reshape the tensor to the target shape [batch_size, channels, height, width]
-    unpacked = tf.reshape(unpacked, [-1, channels, new_height * 2, new_width * 2])
+    # Reshape the tensor to the target shape [batch_size, height, width, channels]
+    unpacked = tf.reshape(unpacked, [-1, new_height * 2, new_width * 2, channels])
 
     return unpacked
 
