@@ -77,7 +77,7 @@ def plot_training_curves(history, file_path: Union[str, None] = None) -> None:
 
 def train_for_random_data(
         params: AutoEncoderParams,
-        data_shape: List[int, int, int], 
+        data_shape: List[int], 
         train_size = 100, 
         val_size: int = 20,
         epochs: int = 50, 
@@ -170,12 +170,12 @@ def train_until_plateau(
         model: Model, 
         train_data: Tuple[np.ndarray, np.ndarray], 
         val_data: Tuple[np.ndarray, np.ndarray],
-        patience: int = 3, 
+        patience: int = 5, 
         noise_factor: float = 0.1, 
         max_noisy_iterations: int = 7, 
         batch_size: int = 32, 
         epochs_per_round: int = 10
-) -> List[History.history]:
+) -> List[History]:
     """
     Trains a model until validation loss plateaus, then adds noise to the input data and continues training.
 
@@ -202,14 +202,16 @@ def train_until_plateau(
         - Noise is injected using the `add_noise_to_inputs` function, which perturbs the original training data.
     """
     
-    train_X, train_y = train_data
-    val_X, val_y = val_data
+    train_X = train_data
+    train_y = train_data
+    val_X = val_data
+    val_y = val_data
     
     checkpoint_path = "/mnt/rafast/miler/noisy_model"
     # Use EarlyStopping to stop training if validation loss does not improve
     early_stopping = EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
     checkpoint_callback = ModelCheckpoint(filepath=checkpoint_path, save_best_only=True, verbose=1)
-    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_delta=0.001)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=patience, min_delta=0.001)
     callbacks = [checkpoint_callback, reduce_lr, early_stopping]
 
     noisy_iteration = 0
