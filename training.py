@@ -173,7 +173,7 @@ def train_until_plateau(
         patience: int = 5, 
         noise_factor: float = 0.1, 
         max_noisy_iterations: int = 7, 
-        batch_size: int = 32, 
+        batch_size: int = 2, 
         epochs_per_round: int = 10
 ) -> List[History]:
     """
@@ -219,6 +219,9 @@ def train_until_plateau(
     history_list = []
     while noisy_iteration <= max_noisy_iterations:
         print(f"\n--- Training without noise, iteration {noisy_iteration + 1} ---")
+        print("train_X shape", train_X.shape)
+        print("val_X shape", val_X.shape)
+
 
         # Train the model until validation loss no longer improves
         history = model.fit(train_X, train_y, 
@@ -226,7 +229,7 @@ def train_until_plateau(
                             epochs=epochs_per_round,
                             batch_size=batch_size,
                             callbacks=callbacks,
-                            verbose=2)
+                            verbose=1)
 
         history_list.append(history)
 

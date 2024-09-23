@@ -166,10 +166,11 @@ def plot_encoder_filters(
     print(num_filters)
 
     # Calculate the grid size for plotting filters
-    grid_size = int(np.ceil(np.sqrt(num_filters)))
+    # grid_size = int(np.ceil(np.sqrt(num_filters))) Keine Ahnung wieso die Wurzel hier genommen wird
+    grid_size = int(num_filters)
 
     # Create a figure with subplots
-    fig, axes = plt.subplots(num_samples, grid_size, figsize=(15, 3 * num_samples))
+    fig, axes = plt.subplots(num_samples, grid_size, figsize=(30, 3 * num_samples))
 
     # Normalize the encoded output for better visualization
     encoded_output = (encoded_output - encoded_output.min()) / (encoded_output.max() - encoded_output.min())
@@ -195,6 +196,6 @@ def plot_encoder_filters(
     plt.savefig(file_path)
     
     # Show the plot (optional)
-    plt.show()
+    #plt.show()
 
     return None

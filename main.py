@@ -64,30 +64,32 @@ def test_data():
 
 def plot_data():
     params = AutoEncoderParams(
-        resolution=200,
-        in_channels=3,
-        ch=32,
+        resolution=256,
+        in_channels=1,
+        ch=4,
         out_ch=1,
-        ch_mult=[1,2,4],
-        num_res_blocks=5,
-        z_channels=16,
+        ch_mult=[1,2],
+        num_res_blocks=3,
+        z_channels=8,
         scale_factor=1.0,
         shift_factor=0.0
     )
     autoencoder = AutoEncoder(params=params)
 
-    checkpoint_path = "/mnt/rafast/miler/checkpoint_300.tf"
-    data = np.load("/mnt/rafast/miler/grid_array.npy")
-    data = data.reshape(data.shape[0],200,200,1)
+    #checkpoint_path = "/mnt/rafast/miler/checkpoint_300.tf"
+    #data = np.load("/mnt/rafast/miler/grid_array.npy")
+    #data = data.reshape(data.shape[0],200,200,1)
+    checkpoint_path = "/mnt/rafast/miler/noisy_model"
+    data = np.load("/mnt/rafast/miler/ml_data_pics.npy",mmap_mode='r')
     
     train_data, val_data = data[:int(len(data)*0.8)], data[int(len(data)*0.8):]
-    val_data = np.ones(shape=val_data.shape)
+    #val_data = np.ones(shape=val_data.shape)
 
     # Step 3: Load the weights from the checkpoint
     print("------------------------------")
     autoencoder.load_weights(checkpoint_path)
     print("Wheigts were loaded")
-    plot_encoder_filters(autoencoder.encoder, val_data, num_samples=2)
+    plot_encoder_filters(autoencoder.encoder, train_data, num_samples=8)
 
 def main_noisy():
     params = AutoEncoderParams(
@@ -95,14 +97,14 @@ def main_noisy():
         in_channels=1,
         ch=4,
         out_ch=1,
-        ch_mult=[1,2,4],
+        ch_mult=[1,2],
         num_res_blocks=3,
-        z_channels=16,
+        z_channels=8,
         scale_factor=1.0,
         shift_factor=0.0
     )
     epochs=300
-    batch_size=1
+    batch_size=2
     
     autoencoder = AutoEncoder(params=params)
     
@@ -128,6 +130,8 @@ def main_noisy():
     # Build the model with the specified input shape
     autoencoder.build(input_shape=(batch_size, 256, 256, 1))  # Adjust as needed
 
+    print(autoencoder.summary())
+
     history = train_until_plateau(autoencoder, train_data, val_data, epochs_per_round=epochs, batch_size=batch_size)
     
     #plot_training_curves(history[-1])
@@ -137,4 +141,5 @@ def main_noisy():
     print(autoencoder.encoder.summary())
     print(autoencoder.decoder.summary())
 if __name__ == "__main__":
-    main_noisy()
+    #main_noisy()
+    plot_data()
