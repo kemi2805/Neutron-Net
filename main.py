@@ -1,4 +1,5 @@
 # main.py
+from tensorflow.data import Dataset, experimental # type: ignore
 from keras.optimizers import Adam
 from keras.losses import MeanSquaredError
 from keras.metrics import MeanAbsoluteError
@@ -95,17 +96,17 @@ def main_noisy():
     params = AutoEncoderParams(
         resolution=256,
         in_channels=1,
-        ch=4,
+        ch=1,
         out_ch=1,
-        ch_mult=[1,2],
-        num_res_blocks=3,
-        z_channels=8,
+        ch_mult=[2,4,8,16],
+        num_res_blocks=4,
+        z_channels=4,
         scale_factor=1.0,
         shift_factor=0.0
     )
     epochs=300
     batch_size=2
-    
+     
     autoencoder = AutoEncoder(params=params)
     
     try:
@@ -115,6 +116,10 @@ def main_noisy():
 
     except Exception as e:
         print(f"Error loading the file: {e}")
+
+    dataset = Dataset.from_tensor_slices(data)
+    dataset = dataset.shuffle(10000).batch(batch_size).cache().prefetch(buffer_size=experimental.AUTOTUNE)
+
 
     data = data.reshape(data.shape[0],256,256,1)
     train_data, val_data = data[:int(len(data)*0.8)], data[int(len(data)*0.8):]
