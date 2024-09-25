@@ -1,5 +1,5 @@
 # main.py
-from tensorflow.data import Dataset, experimental # type: ignore
+import tensorflow as tf
 from keras.optimizers import Adam
 from keras.losses import MeanSquaredError
 from keras.metrics import MeanAbsoluteError
@@ -26,10 +26,17 @@ def main():
     )
     epochs=100
     batch_size=8
+    max_batch_size = 2
+    accumulation_steps = batch_size // max_batch_size
+
     beta_scheduler = CosineBetaScheduler(1000).cosine_schedule
      
     autoencoder = AutoEncoder(params=params)
     neutron_net = NeutronNet(params, beta_scheduler, 4)
+
+    optimizer = Adam(learning_rate=0.001)
+    loss_fn = MeanSquaredError()
+    metric_fn = MeanAbsoluteError()
     
     patience = 10
     checkpoint_path = "/mnt/rafast/miler/some_model"
@@ -38,41 +45,29 @@ def main():
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=patience, min_delta=0.001)
     callbacks = [checkpoint_callback, reduce_lr, early_stopping]
 
-
     try:
         data = np.load("/mnt/rafast/miler/ml_data_pics.npy", mmap_mode='r')
         print("File loaded successfully!")
 
-
     except Exception as e:
         print(f"Error loading the file: {e}")
 
-    dataset = Dataset.from_tensor_slices(data)
-    dataset = dataset.shuffle(10000).batch(batch_size).cache().prefetch(buffer_size=experimental.AUTOTUNE)
+    len_data = data.shape[0]
+    val_split = 0.1
 
+    data_tensor = tf.convert_to_tensor(data)
+    dataset = tf.data.Dataset.from_tensor_slices(data_tensor)
+    # Calculate the number of training and validation samples
+    val_size = int(len_data * val_split)
+    train_size = len_data - val_size
 
-    data = data.reshape(data.shape[0],256,256,1)
-    train_data, val_data = data[:int(len(data)*0.8)], data[int(len(data)*0.8):]
+    # Create the training and validation datasets
+    train_dataset = dataset.take(train_size).batch(batch_size).cache().prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    val_dataset = dataset.skip(train_size).take(val_size).batch(batch_size).cache().prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    # Initialize optimizer, loss function, and metric function
-    optimizer = Adam(learning_rate=0.001)
-    loss_fn = MeanSquaredError()
-    metric_fn = MeanAbsoluteError()
+    #dataset = dataset.interleave(lambda x: tf.data.Dataset.from_tensor_slices(x), num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
-    # Compile the autoencoder
-    autoencoder.compile(optimizer=optimizer, loss=loss_fn, metrics=[metric_fn])
+    neutron_net.train_model(train_dataset, epochs, callbacks, optimizer, val_dataset)
 
-    # Build the model with the specified input shape
-    autoencoder.build(input_shape=(batch_size, 256, 256, 1))  # Adjust as needed
-
-    print(autoencoder.summary())
-
-    
-    #plot_training_curves(history[-1])
-    
-    #plot_original_vs_reconstructed_griddata(autoencoder, val_data)
-
-    print(autoencoder.encoder.summary())
-    print(autoencoder.decoder.summary())
 if __name__ == "__main__":
     main()

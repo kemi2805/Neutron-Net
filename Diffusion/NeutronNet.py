@@ -1,7 +1,7 @@
 import tensorflow as tf
 from autoencoder import AutoEncoder, AutoEncoderParams
 from numpy import pi
-from typing import Callable
+from typing import Callable, List
 
 class NeutronNet(tf.keras.Model):
     def __init__(
@@ -125,7 +125,27 @@ class NeutronNet(tf.keras.Model):
         return loss
 
     @tf.function
-    def train_model(self, dataset, num_epochs, callbacks, validation_data=None):
+    def train_model(
+        self, 
+        dataset: tf.Tensor, 
+        num_epochs: int, 
+        callbacks: List, 
+        optimizer, 
+        validation_data=None
+    ) -> None:
+        """
+        Performs the model training.
+
+        Args:
+            dataset (tf.Tensor): The entiretry of data.
+            num_epochs (int): The current time step in the diffusion process.
+            callbacks (List): A list of callbacks to be used
+            optimizer (tf.keras.optimizers.Optimizer): The optimizer to update the model weights.
+            validation_data (tf.Tensor): Validation data
+
+        Returns:
+            None
+        """
         for epoch in range(num_epochs):
             for step, images in enumerate(dataset):
                 t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
