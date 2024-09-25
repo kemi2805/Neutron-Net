@@ -1,5 +1,7 @@
 import tensorflow as tf
 from autoencoder import AutoEncoder, AutoEncoderParams
+from numpy import pi
+from typing import Callable
 
 class NeutronNet(tf.keras.Model):
     def __init__(
@@ -144,6 +146,74 @@ class NeutronNet(tf.keras.Model):
             for callback in callbacks:
                 callback.on_epoch_end(epoch, logs={'loss': loss, 'val_loss': val_loss})
 
+
+class CosineBetaScheduler:
+    def __init__(self, num_timesteps: int, s: float = 0.008):
+        self.num_timesteps = num_timesteps
+        self.s = s
+        
+        # Generate cosine schedule
+        self.cosine_schedule = self._generate_cosine_schedule()
+
+    def _generate_cosine_schedule(self) -> tf.Tensor:
+        x = tf.linspace(0, 1, self.num_timesteps)
+        alpha = tf.cos((x / self.s * (pi / 2)))
+        alpha = tf.clip_by_value(alpha, clip_value_min=0, clip_value_max=0.9999)
+        return alpha
+
+    def get_beta(self, t: int) -> float:
+        """
+        Get beta value for a given timestep.
+        
+        Args:
+            t (int): Current timestep
+        
+        Returns:
+            float: Beta value for the current timestep
+        """
+        alpha_t = self.cosine_schedule[t]
+        beta_t = 1 - alpha_t
+        return beta_t.numpy()
+
+    def schedule(self, model_output: tf.Tensor, sample: tf.Tensor, t: int) -> tf.Tensor:
+        """
+        Schedule function to update the sample based on model output.
+        
+        Args:
+            model_output (tf.Tensor): Model output for the current timestep
+            sample (tf.Tensor): Current sample being diffused
+            t (int): Current timestep
+        
+        Returns:
+            tf.Tensor: Updated sample
+        """
+        beta_t = self.get_beta(t)
+        alpha_t = 1 - beta_t
+        
+        # Update sample
+        sample = tf.math.add(sample * alpha_t, model_output * beta_t)
+        
+        return sample
+
+def cosine_beta_schedule(num_timesteps: int, s: float = 0.008) -> Callable[[int], float]:
+    """
+    Generate a cosine-based beta schedule.
+    
+    Args:
+        num_timesteps (int): Number of time steps
+        s (float): Small constant used in calculation (default: 0.008)
+    
+    Returns:
+        Callable[[int], float]: Function to get beta value for a given timestep
+    """
+    x = tf.linspace(0, 1, num_timesteps)
+    alpha = tf.cos((x / s * (pi / 2)))
+    alpha = tf.clip_by_value(alpha, clip_value_min=0, clip_value_max=0.9999)
+    
+    def get_beta(t):
+        return 1 - alpha[t]
+    
+    return get_beta
 
 
 if __name__ == "__main__":
