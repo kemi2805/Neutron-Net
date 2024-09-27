@@ -64,9 +64,9 @@ class NeutronNet(tf.keras.Model):
         Returns:
             tf.Tensor: The noisy image after applying the diffusion process.
         """
-        noise = tf.random.normal(shape=image.shape)
+        noise = tf.random.normal(shape=image.shape, dtype=tf.float64)
         alpha = 1 - self.beta_schedule[t]
-        alpha_bar = tf.math.cumprod([1] + [alpha], axis=0)[-1]
+        alpha_bar = tf.math.cumprod(tf.cast([1.0] + [alpha], tf.float64), axis=0)[-1]
         image_noisy = tf.sqrt(alpha_bar) * image + tf.sqrt(1 - alpha_bar) * noise
         return image_noisy
 
@@ -89,8 +89,30 @@ class NeutronNet(tf.keras.Model):
         noise_pred = self.model(image_noisy, training=True)
         loss = tf.reduce_mean(tf.square(noise_pred))
         return loss
-
+    
     @tf.function
+    def validation(
+        self, 
+        images: tf.Tensor, 
+        t: int, 
+        optimizer: tf.keras.optimizers.Optimizer
+    ) -> tf.Tensor:
+        """
+        Performs validation, including gradient accumulation.
+
+        Args:
+            images (tf.Tensor): A batch of image tensors for training.
+            t (int): The current time step in the diffusion process.
+            optimizer (tf.keras.optimizers.Optimizer): The optimizer to update the model weights.
+
+        Returns:
+            tf.Tensor: The computed loss for validation data.
+        """
+        image_noisy = self.forward_diffusion_step(images, t)
+        loss = self.reverse_diffusion_step(image_noisy, t)
+        return loss
+    
+    #@tf.function
     def train_step(
         self, 
         images: tf.Tensor, 
@@ -110,9 +132,11 @@ class NeutronNet(tf.keras.Model):
         """
         accumulated_gradients = [tf.zeros_like(var) for var in self.model.trainable_variables]
 
-        for _ in range(self.accumulation_steps):
+        sub_batch_size = images.shape[0] // self.accumulation_steps
+        for i in range(self.accumulation_steps):
+            sub_batch = images[i * sub_batch_size:(i + 1) * sub_batch_size]
             with tf.GradientTape() as tape:
-                image_noisy = self.forward_diffusion_step(images, t)
+                image_noisy = self.forward_diffusion_step(sub_batch, t)
                 loss = self.reverse_diffusion_step(image_noisy, t)
 
             gradients = tape.gradient(loss, self.model.trainable_variables)
@@ -124,30 +148,36 @@ class NeutronNet(tf.keras.Model):
 
         return loss
 
-    @tf.function
+    #@tf.function
     def train_model(
         self, 
-        dataset: tf.Tensor, 
+        train_dataset: tf.data.Dataset, 
         num_epochs: int, 
         callbacks: List, 
         optimizer, 
-        validation_data=None
+        val_dataset: tf.data.Dataset=None,
+        batch_size: int = 1
     ) -> None:
         """
         Performs the model training.
 
         Args:
-            dataset (tf.Tensor): The entiretry of data.
-            num_epochs (int): The current time step in the diffusion process.
-            callbacks (List): A list of callbacks to be used
+            dataset (tf.data.Dataset): The training dataset (batched, prefetched, etc.).
+            num_epochs (int): Number of epochs to train for.
+            callbacks (List): A list of callbacks to be used.
             optimizer (tf.keras.optimizers.Optimizer): The optimizer to update the model weights.
-            validation_data (tf.Tensor): Validation data
+            validation_data (tf.data.Dataset): Validation dataset, optional.
+            batch_size (int): Size of batches
 
         Returns:
             None
         """
+        loss = 0.0
+        step = -1
         for epoch in range(num_epochs):
-            for step, images in enumerate(dataset):
+            for images in train_dataset:
+                step += 1
+                print(step)
                 t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
                 loss = self.train_step(images, t, optimizer)
 
@@ -156,11 +186,15 @@ class NeutronNet(tf.keras.Model):
                     callback.on_train_batch_end(step, logs={'loss': loss})
 
             # Am Ende der Epoche: berechne val_loss, falls validation_data gegeben ist
-            val_loss = None
-            if validation_data:
-                val_images = next(iter(validation_data))  # Nehme ein Batch von Validierungsdaten
-                t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
-                val_loss = self.train_step(val_images, t, optimizer)  # oder wie du val_loss berechnen möchtest
+            val_loss = 0
+            print(val_dataset)
+            if val_dataset:
+                for val_images in val_dataset:
+                    print(val_images)
+                    t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
+                    val_loss += self.validation(val_images, t, optimizer)  # oder wie du val_loss berechnen möchtest
+                if len(val_dataset) != 0:
+                    val_loss /= len(val_dataset)
 
             # Am Ende der Epoche
             for callback in callbacks:
@@ -177,7 +211,8 @@ class CosineBetaScheduler:
 
     def _generate_cosine_schedule(self) -> tf.Tensor:
         x = tf.linspace(0, 1, self.num_timesteps)
-        alpha = tf.cos((x / self.s * (pi / 2)))
+        alpha = tf.cos(((x+self.s) / (1+self.s) * (pi / 2)))
+        alpha = tf.square(alpha)
         alpha = tf.clip_by_value(alpha, clip_value_min=0, clip_value_max=0.9999)
         return alpha
 
@@ -191,8 +226,9 @@ class CosineBetaScheduler:
         Returns:
             float: Beta value for the current timestep
         """
+        alpha_0 = self.cosine_schedule[0]
         alpha_t = self.cosine_schedule[t]
-        beta_t = 1 - alpha_t
+        beta_t = 1 - alpha_t/alpha_0
         return beta_t.numpy()
 
     def schedule(self, model_output: tf.Tensor, sample: tf.Tensor, t: int) -> tf.Tensor:
@@ -214,6 +250,12 @@ class CosineBetaScheduler:
         sample = tf.math.add(sample * alpha_t, model_output * beta_t)
         
         return sample
+    
+    def get_schedule(self) -> tf.Tensor:
+        alpha_0 = self.cosine_schedule[0]
+        alpha_t = self.cosine_schedule
+        beta_t = 1 - alpha_t/alpha_0
+        return beta_t
 
 def cosine_beta_schedule(num_timesteps: int, s: float = 0.008) -> Callable[[int], float]:
     """
