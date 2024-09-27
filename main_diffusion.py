@@ -13,6 +13,7 @@ from Diffusion.NeutronNet import NeutronNet, CosineBetaScheduler
 
 
 def main():
+    # Test goethe cluster
     # ---- Neutron Net Initalization ----
     params = AutoEncoderParams(
         resolution=256,
