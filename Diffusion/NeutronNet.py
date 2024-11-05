@@ -87,15 +87,16 @@ class NeutronNet(tf.keras.Model):
             tf.Tensor: The calculated loss between predicted noise and actual noise.
         """
         noise_pred = self.model(image_noisy, training=True)
-        loss = tf.reduce_mean(tf.square(noise_pred))
-        return loss
+        #loss = tf.reduce_mean(tf.square(noise_pred))
+        return noise_pred
     
     @tf.function
-    def validation(
+    def validation_step(
         self, 
         images: tf.Tensor, 
         t: int, 
-        optimizer: tf.keras.optimizers.Optimizer
+        optimizer: tf.keras.optimizers.Optimizer,
+        loss_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor]=tf.keras.losses.MeanSquaredError()
     ) -> tf.Tensor:
         """
         Performs validation, including gradient accumulation.
@@ -104,12 +105,14 @@ class NeutronNet(tf.keras.Model):
             images (tf.Tensor): A batch of image tensors for training.
             t (int): The current time step in the diffusion process.
             optimizer (tf.keras.optimizers.Optimizer): The optimizer to update the model weights.
+            loss_fn (Callable): The loss function
 
         Returns:
             tf.Tensor: The computed loss for validation data.
         """
         image_noisy = self.forward_diffusion_step(images, t)
-        loss = self.reverse_diffusion_step(image_noisy, t)
+        noise_pred = self.reverse_diffusion_step(image_noisy, t)
+        loss = loss_fn(image_noisy, noise_pred)
         return loss
     
     #@tf.function
@@ -117,7 +120,8 @@ class NeutronNet(tf.keras.Model):
         self, 
         images: tf.Tensor, 
         t: int, 
-        optimizer: tf.keras.optimizers.Optimizer
+        optimizer: tf.keras.optimizers.Optimizer,
+        loss_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor]=tf.keras.losses.MeanSquaredError()
     ) -> tf.Tensor:
         """
         Performs a single training step, including gradient accumulation.
@@ -126,18 +130,24 @@ class NeutronNet(tf.keras.Model):
             images (tf.Tensor): A batch of image tensors for training.
             t (int): The current time step in the diffusion process.
             optimizer (tf.keras.optimizers.Optimizer): The optimizer to update the model weights.
+            loss_fn (Callable): The loss function of the neural net
 
         Returns:
             tf.Tensor: The computed loss for the current training step.
         """
         accumulated_gradients = [tf.zeros_like(var) for var in self.model.trainable_variables]
+        total_loss = 0.0
 
-        sub_batch_size = images.shape[0] // self.accumulation_steps
+        #sub_batch_size = images.shape[0] // self.accumulation_steps
+        sub_batch_size = tf.shape(images)[0] // self.accumulation_steps
         for i in range(self.accumulation_steps):
-            sub_batch = images[i * sub_batch_size:(i + 1) * sub_batch_size]
+            sub_batch = images[int(i * sub_batch_size):int((i + 1) * sub_batch_size)]
             with tf.GradientTape() as tape:
                 image_noisy = self.forward_diffusion_step(sub_batch, t)
-                loss = self.reverse_diffusion_step(image_noisy, t)
+                predicted_images = self.reverse_diffusion_step(image_noisy, t)
+                # Compute loss using the dynamic loss function
+                loss = loss_fn(predicted_images, sub_batch)  # Use loss_fn dynamically
+                total_loss += loss
 
             gradients = tape.gradient(loss, self.model.trainable_variables)
             accumulated_gradients = [accum_grad + grad for accum_grad, grad in zip(accumulated_gradients, gradients)]
@@ -145,8 +155,9 @@ class NeutronNet(tf.keras.Model):
         # Apply accumulated gradients
         accumulated_gradients = [grad / self.accumulation_steps for grad in accumulated_gradients]
         optimizer.apply_gradients(zip(accumulated_gradients, self.model.trainable_variables))
+        total_loss = total_loss.numpy()
 
-        return loss
+        return total_loss / tf.cast(self.accumulation_steps, tf.float32)
 
     #@tf.function
     def train_model(
@@ -156,7 +167,9 @@ class NeutronNet(tf.keras.Model):
         callbacks: List, 
         optimizer, 
         val_dataset: tf.data.Dataset=None,
-        batch_size: int = 1
+        batch_size: int = 1,
+        loss_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor]=tf.keras.losses.MeanSquaredError(),
+        metric_fn: Callable[[tf.Tensor], tf.Tensor]=tf.keras.metrics.Mean()
     ) -> None:
         """
         Performs the model training.
@@ -168,37 +181,76 @@ class NeutronNet(tf.keras.Model):
             optimizer (tf.keras.optimizers.Optimizer): The optimizer to update the model weights.
             validation_data (tf.data.Dataset): Validation dataset, optional.
             batch_size (int): Size of batches
+            loss_fn (Callable): The loss function of the neural net
+            metric_fn (Callable): The metric function for logging
 
         Returns:
             None
         """
-        loss = 0.0
+        # Notify callbacks that training is beginning
+        for callback in callbacks:
+            callback.on_train_begin()
+
         step = -1
         for epoch in range(num_epochs):
+            print(f"Epoch {epoch + 1}/{num_epochs}")
+
+            # Notify callbacks that a new epoch is beginning
+            for callback in callbacks:
+                callback.on_epoch_begin(epoch)
+
+            
+            # Training loop
+            train_loss = loss_fn
+            train_metric = metric_fn
             for images in train_dataset:
                 step += 1
-                print(step)
-                t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
-                loss = self.train_step(images, t, optimizer)
+                #t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
+                t = tf.random.uniform([], minval=0, maxval=tf.shape(self.beta_schedule)[0], dtype=tf.int32)
+                t = int(t.numpy())
+                step_loss = self.train_step(images, t, optimizer, train_loss)
+                train_metric.update_state(step_loss)
 
-                # Callbacks aufrufen für jeden Batch
+                # Call callbacks for each batch
                 for callback in callbacks:
-                    callback.on_train_batch_end(step, logs={'loss': loss})
+                    callback.on_train_batch_end(step, logs={'loss': step_loss})
 
-            # Am Ende der Epoche: berechne val_loss, falls validation_data gegeben ist
-            val_loss = 0
-            print(val_dataset)
+                if step % 100 == 0:
+                    tf.print(f"Step {step}, Loss: {step_loss:.4f}")
+
+            # Validation loop
             if val_dataset:
+                val_metric = metric_fn
                 for val_images in val_dataset:
                     print(val_images)
-                    t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
-                    val_loss += self.validation(val_images, t, optimizer)  # oder wie du val_loss berechnen möchtest
-                if len(val_dataset) != 0:
-                    val_loss /= len(val_dataset)
+                    #t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
+                    t = tf.random.uniform([], minval=0, maxval=tf.shape(self.beta_schedule)[0], dtype=tf.int32)
+                    t = int(t.numpy())
+                    val_step_loss = self.validation_step(val_images, t, optimizer)  # oder wie du val_loss berechnen möchtest
+                    val_metric.update_state(val_step_loss)
+                #if len(val_dataset) != 0:
+                #    val_metric /= len(val_dataset)
 
-            # Am Ende der Epoche
+            # Epoch end
+            logs = {'loss': train_metric.result()}
+            if val_dataset:
+                logs['val_loss'] = val_metric.result()
+
             for callback in callbacks:
-                callback.on_epoch_end(epoch, logs={'loss': loss, 'val_loss': val_loss})
+                callback.on_epoch_end(epoch, logs=logs)
+
+            tf.print(f"Epoch {epoch + 1} finished. Train Loss: {logs['loss']:.4f}" + 
+                (f", Val Loss: {logs['val_loss']:.4f}" if val_dataset else ""))
+
+            train_metric.reset_states()
+            if val_dataset:
+                val_metric.reset_states()
+
+            for callback in callbacks:
+                callback.on_train_end()
+
+
+
 
 
 class CosineBetaScheduler:

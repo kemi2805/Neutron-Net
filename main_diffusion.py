@@ -26,8 +26,8 @@ def main():
         scale_factor=1.0,
         shift_factor=0.0
     )
-    epochs=1
-    batch_size=2
+    epochs=10
+    batch_size=8
     max_batch_size = 2
     accumulation_steps = batch_size // max_batch_size
 
