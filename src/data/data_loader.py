@@ -56,7 +56,7 @@ class NeutronStarDataset(Dataset):
     
     def __getitem__(self, idx: int) -> torch.Tensor:
         sample = self.data[idx].astype(np.float32)
-        sample = torch.from_tensor(sample)
+        sample = torch.from_numpy(sample)
         
         if self.transform:
             sample = self.transform(sample)

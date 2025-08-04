@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from ..models.diffusion import NeutronNet, DiffusionTrainer
 from ..models.autoencoder import AutoEncoderConfig
 from ..utils.physics import validate_physics_constraints
+from ..data.data_loader import load_neutron_star_data
 
 
 @dataclass
@@ -188,7 +189,7 @@ class NeutronStarTrainer:
             predicted_noise = self.model.reverse_diffusion_step(noisy_images, t)
             
             # Compute loss
-            loss = self.loss_fn(predicted_noise, sub_batch) / self.config.accumulation_steps
+            loss = self.loss_fn(predicted_noise, noise) / self.config.accumulation_steps
             
             # Backward pass
             loss.backward()
@@ -226,7 +227,7 @@ class NeutronStarTrainer:
             predicted_noise = self.model.reverse_diffusion_step(noisy_images, t)
             
             # Compute loss
-            loss = self.loss_fn(predicted_noise, batch)
+            loss = self.loss_fn(predicted_noise, noise)
             total_loss += loss.item()
         
         avg_loss = total_loss / num_batches

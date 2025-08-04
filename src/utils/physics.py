@@ -457,6 +457,10 @@ if __name__ == "__main__":
     
     # Create a dummy model that just returns the input
     class DummyModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.dummy_param = nn.Parameter(torch.tensor(1.0))
+    
         def forward(self, x):
             return x + 0.01 * torch.randn_like(x)
     

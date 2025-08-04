@@ -9,6 +9,7 @@ import torch.nn as nn
 import numpy as np
 import pandas as pd
 from scipy.interpolate import griddata
+from scipy.ndimage import zoom
 from sklearn.model_selection import train_test_split
 from pathlib import Path
 from typing import Tuple, Union, Dict, Optional, List
