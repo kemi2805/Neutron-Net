@@ -1,0 +1,47 @@
+# Core ML Framework - PyTorch with ROCm support
+--extra-index-url https://download.pytorch.org/whl/rocm6.2
+torch
+torchvision
+torchaudio
+
+# PyTorch ecosystem
+torchmetrics
+pytorch-lightning
+transformers
+accelerate
+
+# Data Processing
+numpy
+pandas
+scipy
+scikit-image
+scikit-learn
+
+# Parallel Processing
+dask[distributed]
+dask[dataframe]
+
+# Configuration Management
+hydra-core
+omegaconf
+
+# Logging and Monitoring
+wandb
+tensorboard
+rich
+
+# Data Science
+matplotlib
+seaborn
+plotly
+
+# Utilities
+tqdm
+einops
+click
+
+# Development
+black
+isort
+pytest
+pre-commit

@@ -1,0 +1,23 @@
+# Data Configuration
+# Paths (update these to match your setup)
+root_path: "/mnt/rafast/miler"
+raw_data_path: "${data.root_path}/new_normalized_star/test/"
+processed_data_path: "${data.root_path}/ml_data_pics.npy"
+checkpoint_dir: "${data.root_path}/checkpoints"
+logs_dir: "${data.root_path}/logs"
+
+# Data processing
+image_size: [256, 256, 1]
+validation_split: 0.1
+shuffle_buffer_size: 10000
+
+# Data loading
+batch_size: 8
+prefetch_buffer_size: 2  # tf.data.AUTOTUNE equivalent
+
+# Augmentation
+augmentation:
+  enabled: true
+  noise_factor: 0.1
+  crop_size: [200, 200]
+  rotation_factor: 0.2
