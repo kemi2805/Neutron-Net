@@ -1,31 +1,4 @@
-# Ignore all files in the plots directory
-plots/*
-
-
 __pycache__/
 *.pyc
 *.pyo
-
-Processing/image.ipynb
-
-tests/*
-
-# Environment variables
-# .env
-#
-# # IDE/editor specific files
-# .vscode/
-# *.sublime-project
-# *.sublime-workspace
-#
-# # Dependency directories
-# venv/
-# .env/
-#
-# # Logs
-# *.log
-#
-# # Build directories
-# build/
-# dist/
-#
+.vscode/

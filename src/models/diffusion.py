@@ -1,362 +1,412 @@
+# src/models/diffusion_pytorch.py
 """
-Diffusion module for neutron star diffusion.
-Migrated and cleaned up.
+PyTorch implementation of the diffusion model for neutron star data.
+Converted from TensorFlow implementation.
 """
 
-import tensorflow as tf
-from autoencoder import AutoEncoder, AutoEncoderParams
-from numpy import pi
-from typing import Callable, List
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+import math
+from typing import Optional, List, Callable, Tuple
+from dataclasses import dataclass
 
-class NeutronNet(tf.keras.Model):
-    def __init__(
-            self, 
-            AutoEncoderParams: AutoEncoderParams,
-            beta_schedule: tf.Tensor,
-            accumulation_steps: int=4
-    ):
-        """
-        Initializes the NeutronNet model.
-
-        Args:
-            autoencoder_params (AutoEncoderParams): Parameters for the AutoEncoder.
-            beta_schedule (tf.Tensor): A tensor representing the beta schedule for noise.
-            accumulation_steps (int): Number of steps for gradient accumulation.
-        """
-        super(NeutronNet, self).__init__()
-        self.model = self.build_model(AutoEncoderParams)
-        self.beta_schedule = beta_schedule
-        self.accumulation_steps = accumulation_steps
-
-    def build_model(
-            self, 
-            autoencoder_params: AutoEncoderParams
-    ) -> AutoEncoder:
-        model = AutoEncoder(params=autoencoder_params)
-        return model
-
-    def set_beta_schedule(
-            self, 
-            new_beta_schedule: tf.Tensor
-    ) -> None:
-        self.beta_schedule = new_beta_schedule
-
-    def set_accumulation_steps(
-            self, 
-            new_accumulation_steps: int
-    ) -> None:
-        self.accumulation_steps = new_accumulation_steps
-
-    def set_model(
-            self, 
-            new_model: tf.keras.Model
-    ) -> None:
-        self.model = new_model
-
-    @tf.function
-    def forward_diffusion_step(
-        self, 
-        image: tf.Tensor,
-        t: int
-    ) -> tf.Tensor:
-        """
-        Performs the forward diffusion step by adding noise to the image.
-
-        Args:
-            image (tf.Tensor): The original image tensor.
-            t (int): The current time step in the diffusion process.
-
-        Returns:
-            tf.Tensor: The noisy image after applying the diffusion process.
-        """
-        noise = tf.random.normal(shape=image.shape, dtype=tf.float64)
-        alpha = 1 - self.beta_schedule[t]
-        alpha_bar = tf.math.cumprod(tf.cast([1.0] + [alpha], tf.float64), axis=0)[-1]
-        image_noisy = tf.sqrt(alpha_bar) * image + tf.sqrt(1 - alpha_bar) * noise
-        return image_noisy
-
-    @tf.function
-    def reverse_diffusion_step(
-        self, 
-        image_noisy: tf.Tensor, 
-        t: int
-    ) -> tf.Tensor:
-        """
-        Performs the reverse diffusion step to predict the noise from the noisy image.
-
-        Args:
-            image_noisy (tf.Tensor): The noisy image tensor.
-            t (int): The current time step in the diffusion process.
-
-        Returns:
-            tf.Tensor: The calculated loss between predicted noise and actual noise.
-        """
-        noise_pred = self.model(image_noisy, training=True)
-        #loss = tf.reduce_mean(tf.square(noise_pred))
-        return noise_pred
-    
-    @tf.function
-    def validation_step(
-        self, 
-        images: tf.Tensor, 
-        t: int, 
-        optimizer: tf.keras.optimizers.Optimizer,
-        loss_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor]=tf.keras.losses.MeanSquaredError()
-    ) -> tf.Tensor:
-        """
-        Performs validation, including gradient accumulation.
-
-        Args:
-            images (tf.Tensor): A batch of image tensors for training.
-            t (int): The current time step in the diffusion process.
-            optimizer (tf.keras.optimizers.Optimizer): The optimizer to update the model weights.
-            loss_fn (Callable): The loss function
-
-        Returns:
-            tf.Tensor: The computed loss for validation data.
-        """
-        image_noisy = self.forward_diffusion_step(images, t)
-        noise_pred = self.reverse_diffusion_step(image_noisy, t)
-        loss = loss_fn(image_noisy, noise_pred)
-        return loss
-    
-    #@tf.function
-    def train_step(
-        self, 
-        images: tf.Tensor, 
-        t: int, 
-        optimizer: tf.keras.optimizers.Optimizer,
-        loss_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor]=tf.keras.losses.MeanSquaredError()
-    ) -> tf.Tensor:
-        """
-        Performs a single training step, including gradient accumulation.
-
-        Args:
-            images (tf.Tensor): A batch of image tensors for training.
-            t (int): The current time step in the diffusion process.
-            optimizer (tf.keras.optimizers.Optimizer): The optimizer to update the model weights.
-            loss_fn (Callable): The loss function of the neural net
-
-        Returns:
-            tf.Tensor: The computed loss for the current training step.
-        """
-        accumulated_gradients = [tf.zeros_like(var) for var in self.model.trainable_variables]
-        total_loss = 0.0
-
-        #sub_batch_size = images.shape[0] // self.accumulation_steps
-        sub_batch_size = tf.shape(images)[0] // self.accumulation_steps
-        for i in range(self.accumulation_steps):
-            sub_batch = images[int(i * sub_batch_size):int((i + 1) * sub_batch_size)]
-            with tf.GradientTape() as tape:
-                image_noisy = self.forward_diffusion_step(sub_batch, t)
-                predicted_images = self.reverse_diffusion_step(image_noisy, t)
-                # Compute loss using the dynamic loss function
-                loss = loss_fn(predicted_images, sub_batch)  # Use loss_fn dynamically
-                total_loss += loss
-
-            gradients = tape.gradient(loss, self.model.trainable_variables)
-            accumulated_gradients = [accum_grad + grad for accum_grad, grad in zip(accumulated_gradients, gradients)]
-
-        # Apply accumulated gradients
-        accumulated_gradients = [grad / self.accumulation_steps for grad in accumulated_gradients]
-        optimizer.apply_gradients(zip(accumulated_gradients, self.model.trainable_variables))
-        total_loss = total_loss.numpy()
-
-        return total_loss / tf.cast(self.accumulation_steps, tf.float32)
-
-    #@tf.function
-    def train_model(
-        self, 
-        train_dataset: tf.data.Dataset, 
-        num_epochs: int, 
-        callbacks: List, 
-        optimizer, 
-        val_dataset: tf.data.Dataset=None,
-        batch_size: int = 1,
-        loss_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor]=tf.keras.losses.MeanSquaredError(),
-        metric_fn: Callable[[tf.Tensor], tf.Tensor]=tf.keras.metrics.Mean()
-    ) -> None:
-        """
-        Performs the model training.
-
-        Args:
-            dataset (tf.data.Dataset): The training dataset (batched, prefetched, etc.).
-            num_epochs (int): Number of epochs to train for.
-            callbacks (List): A list of callbacks to be used.
-            optimizer (tf.keras.optimizers.Optimizer): The optimizer to update the model weights.
-            validation_data (tf.data.Dataset): Validation dataset, optional.
-            batch_size (int): Size of batches
-            loss_fn (Callable): The loss function of the neural net
-            metric_fn (Callable): The metric function for logging
-
-        Returns:
-            None
-        """
-        # Notify callbacks that training is beginning
-        for callback in callbacks:
-            callback.on_train_begin()
-
-        step = -1
-        for epoch in range(num_epochs):
-            print(f"Epoch {epoch + 1}/{num_epochs}")
-
-            # Notify callbacks that a new epoch is beginning
-            for callback in callbacks:
-                callback.on_epoch_begin(epoch)
-
-            
-            # Training loop
-            train_loss = loss_fn
-            train_metric = metric_fn
-            for images in train_dataset:
-                step += 1
-                #t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
-                t = tf.random.uniform([], minval=0, maxval=tf.shape(self.beta_schedule)[0], dtype=tf.int32)
-                t = int(t.numpy())
-                step_loss = self.train_step(images, t, optimizer, train_loss)
-                train_metric.update_state(step_loss)
-
-                # Call callbacks for each batch
-                for callback in callbacks:
-                    callback.on_train_batch_end(step, logs={'loss': step_loss})
-
-                if step % 100 == 0:
-                    tf.print(f"Step {step}, Loss: {step_loss:.4f}")
-
-            # Validation loop
-            if val_dataset:
-                val_metric = metric_fn
-                for val_images in val_dataset:
-                    print(val_images)
-                    #t = tf.random.uniform([], minval=0, maxval=len(self.beta_schedule), dtype=tf.int32)
-                    t = tf.random.uniform([], minval=0, maxval=tf.shape(self.beta_schedule)[0], dtype=tf.int32)
-                    t = int(t.numpy())
-                    val_step_loss = self.validation_step(val_images, t, optimizer)  # oder wie du val_loss berechnen möchtest
-                    val_metric.update_state(val_step_loss)
-                #if len(val_dataset) != 0:
-                #    val_metric /= len(val_dataset)
-
-            # Epoch end
-            logs = {'loss': train_metric.result()}
-            if val_dataset:
-                logs['val_loss'] = val_metric.result()
-
-            for callback in callbacks:
-                callback.on_epoch_end(epoch, logs=logs)
-
-            tf.print(f"Epoch {epoch + 1} finished. Train Loss: {logs['loss']:.4f}" + 
-                (f", Val Loss: {logs['val_loss']:.4f}" if val_dataset else ""))
-
-            train_metric.reset_states()
-            if val_dataset:
-                val_metric.reset_states()
-
-            for callback in callbacks:
-                callback.on_train_end()
-
-
-
+from .autoencoder_pytorch import AutoEncoder, AutoEncoderConfig
 
 
 class CosineBetaScheduler:
+    """Cosine beta schedule for diffusion process."""
+    
     def __init__(self, num_timesteps: int, s: float = 0.008):
         self.num_timesteps = num_timesteps
         self.s = s
-        
-        # Generate cosine schedule
         self.cosine_schedule = self._generate_cosine_schedule()
-
-    def _generate_cosine_schedule(self) -> tf.Tensor:
-        x = tf.linspace(0, 1, self.num_timesteps)
-        alpha = tf.cos(((x+self.s) / (1+self.s) * (pi / 2)))
-        alpha = tf.square(alpha)
-        alpha = tf.clip_by_value(alpha, clip_value_min=0, clip_value_max=0.9999)
+    
+    def _generate_cosine_schedule(self) -> torch.Tensor:
+        """Generate cosine schedule for alpha values."""
+        x = torch.linspace(0, 1, self.num_timesteps)
+        alpha = torch.cos(((x + self.s) / (1 + self.s)) * (math.pi / 2))
+        alpha = alpha ** 2
+        alpha = torch.clamp(alpha, min=0, max=0.9999)
         return alpha
-
+    
     def get_beta(self, t: int) -> float:
-        """
-        Get beta value for a given timestep.
-        
-        Args:
-            t (int): Current timestep
-        
-        Returns:
-            float: Beta value for the current timestep
-        """
+        """Get beta value for a given timestep."""
         alpha_0 = self.cosine_schedule[0]
         alpha_t = self.cosine_schedule[t]
-        beta_t = 1 - alpha_t/alpha_0
-        return beta_t.numpy()
-
-    def schedule(self, model_output: tf.Tensor, sample: tf.Tensor, t: int) -> tf.Tensor:
-        """
-        Schedule function to update the sample based on model output.
-        
-        Args:
-            model_output (tf.Tensor): Model output for the current timestep
-            sample (tf.Tensor): Current sample being diffused
-            t (int): Current timestep
-        
-        Returns:
-            tf.Tensor: Updated sample
-        """
-        beta_t = self.get_beta(t)
-        alpha_t = 1 - beta_t
-        
-        # Update sample
-        sample = tf.math.add(sample * alpha_t, model_output * beta_t)
-        
-        return sample
+        beta_t = 1 - alpha_t / alpha_0
+        return beta_t.item()
     
-    def get_schedule(self) -> tf.Tensor:
+    def get_schedule(self) -> torch.Tensor:
+        """Get the full beta schedule."""
         alpha_0 = self.cosine_schedule[0]
         alpha_t = self.cosine_schedule
-        beta_t = 1 - alpha_t/alpha_0
+        beta_t = 1 - alpha_t / alpha_0
         return beta_t
 
-def cosine_beta_schedule(num_timesteps: int, s: float = 0.008) -> Callable[[int], float]:
+
+def get_noise(
+    num_samples: int,
+    height: int,
+    width: int,
+    device: torch.device,
+    generator: Optional[torch.Generator] = None
+) -> torch.Tensor:
+    """Generate random noise tensor."""
+    # Calculate padded dimensions
+    padded_height = 2 * math.ceil(height / 16)
+    padded_width = 2 * math.ceil(width / 16)
+    
+    noise = torch.randn(
+        num_samples, 16, padded_height, padded_width,
+        device=device, generator=generator
+    )
+    
+    return noise
+
+
+def time_shift(mu: float, sigma: float, t: torch.Tensor) -> torch.Tensor:
+    """Apply time shift to tensor t based on mu and sigma."""
+    return torch.exp(torch.tensor(mu)) / (
+        torch.exp(torch.tensor(mu)) + (1 / t - 1) ** sigma
+    )
+
+
+def get_linear_function(
+    x1: float = 256,
+    y1: float = 0.5,
+    x2: float = 4096,
+    y2: float = 1.15
+) -> Callable[[float], float]:
+    """Generate linear interpolation function."""
+    def linear_function(x: float) -> float:
+        m = (y2 - y1) / (x2 - x1)
+        b = y1 - m * x1
+        return m * x + b
+    return linear_function
+
+
+def get_cosine_function(
+    x1: float = 256,
+    y1: float = 0.5,
+    x2: float = 4096,
+    y2: float = 1.15
+) -> Callable[[float], float]:
+    """Generate cosine interpolation function."""
+    def cosine_function(x: float) -> float:
+        normalized_x = (x - x1) / (x2 - x1)
+        return y1 + (y2 - y1) / 2 * (1 - math.cos(math.pi * normalized_x))
+    return cosine_function
+
+
+def get_schedule(
+    num_steps: int,
+    image_seq_len: int,
+    base_shift: float = 0.5,
+    max_shift: float = 1.15,
+    shift: bool = True
+) -> List[float]:
+    """Generate schedule of time steps with optional shifting."""
+    timesteps = torch.linspace(1.0, 0.0, num_steps + 1)
+    
+    if shift:
+        lin_function = get_linear_function(y1=base_shift, y2=max_shift)
+        mu = lin_function(image_seq_len)
+        timesteps = time_shift(mu, 1.0, timesteps)
+    
+    return timesteps.numpy().tolist()
+
+
+class NeutronNet(nn.Module):
     """
-    Generate a cosine-based beta schedule.
+    Diffusion model for neutron star data using autoencoder backbone.
+    """
+    
+    def __init__(
+        self,
+        autoencoder_config: AutoEncoderConfig,
+        beta_schedule: torch.Tensor,
+        accumulation_steps: int = 4
+    ):
+        super().__init__()
+        self.model = AutoEncoder(autoencoder_config)
+        self.register_buffer('beta_schedule', beta_schedule)
+        self.accumulation_steps = accumulation_steps
+        
+        # Precompute alpha values for efficiency
+        alphas = 1.0 - beta_schedule
+        alphas_cumprod = torch.cumprod(alphas, dim=0)
+        self.register_buffer('alphas_cumprod', alphas_cumprod)
+    
+    def forward_diffusion_step(
+        self,
+        image: torch.Tensor,
+        t: torch.Tensor,
+        noise: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Perform forward diffusion step by adding noise to image.
+        
+        Args:
+            image: Original image tensor [B, C, H, W]
+            t: Timestep tensor [B] 
+            noise: Optional noise tensor, generated if None
+            
+        Returns:
+            Tuple of (noisy_image, noise)
+        """
+        if noise is None:
+            noise = torch.randn_like(image)
+        
+        # Get alpha_bar for each timestep in batch
+        alpha_bar = self.alphas_cumprod[t]
+        
+        # Reshape for broadcasting
+        alpha_bar = alpha_bar.view(-1, 1, 1, 1)
+        
+        # Apply noise
+        sqrt_alpha_bar = torch.sqrt(alpha_bar)
+        sqrt_one_minus_alpha_bar = torch.sqrt(1 - alpha_bar)
+        
+        noisy_image = sqrt_alpha_bar * image + sqrt_one_minus_alpha_bar * noise
+        
+        return noisy_image, noise
+    
+    def reverse_diffusion_step(
+        self,
+        noisy_image: torch.Tensor,
+        t: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Perform reverse diffusion step to predict noise.
+        
+        Args:
+            noisy_image: Noisy image tensor
+            t: Timestep tensor
+            
+        Returns:
+            Predicted noise
+        """
+        return self.model(noisy_image)
+    
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """Forward pass for training."""
+        return self.reverse_diffusion_step(x, t)
+
+
+def denoise(
+    model: nn.Module,
+    img: torch.Tensor,
+    timesteps: List[float],
+    guidance: float = 4.0,
+    device: torch.device = None
+) -> torch.Tensor:
+    """
+    Apply iterative denoising to an image tensor.
     
     Args:
-        num_timesteps (int): Number of time steps
-        s (float): Small constant used in calculation (default: 0.008)
-    
+        model: Trained diffusion model
+        img: Input image tensor
+        timesteps: List of timesteps for denoising
+        guidance: Guidance scale
+        device: Device to run on
+        
     Returns:
-        Callable[[int], float]: Function to get beta value for a given timestep
+        Denoised image tensor
     """
-    x = tf.linspace(0, 1, num_timesteps)
-    alpha = tf.cos((x / s * (pi / 2)))
-    alpha = tf.clip_by_value(alpha, clip_value_min=0, clip_value_max=0.9999)
+    if device is None:
+        device = next(model.parameters()).device
     
-    def get_beta(t):
-        return 1 - alpha[t]
+    img = img.to(device)
+    model.eval()
     
-    return get_beta
+    with torch.no_grad():
+        for t_curr, t_prev in zip(timesteps[:-1], timesteps[1:]):
+            # Create timestep tensor
+            t_tensor = torch.full((img.shape[0],), t_curr, device=device)
+            
+            # Predict noise
+            pred = model(img, t_tensor)
+            
+            # Update image
+            img = img + (t_prev - t_curr) * pred
+    
+    return img
 
 
+class PhysicsConstraintLoss(nn.Module):
+    """Custom loss function with physics constraints."""
+    
+    def __init__(
+        self,
+        reconstruction_weight: float = 1.0,
+        physics_weight: float = 0.1
+    ):
+        super().__init__()
+        self.reconstruction_weight = reconstruction_weight
+        self.physics_weight = physics_weight
+        self.mse = nn.MSELoss()
+    
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Compute loss with physics constraints."""
+        # Standard reconstruction loss
+        reconstruction_loss = self.mse(pred, target)
+        
+        # Physics constraint: r_ratio should be between 0 and 1
+        physics_loss = (
+            F.relu(-pred).mean() +  # Penalty for negative values
+            F.relu(pred - 1.0).mean()  # Penalty for values > 1
+        )
+        
+        # Smoothness constraint using Sobel filters
+        # Create Sobel kernels
+        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], 
+                              dtype=pred.dtype, device=pred.device).unsqueeze(0).unsqueeze(0)
+        sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], 
+                              dtype=pred.dtype, device=pred.device).unsqueeze(0).unsqueeze(0)
+        
+        # Apply Sobel filters
+        grad_x = F.conv2d(pred, sobel_x, padding=1)
+        grad_y = F.conv2d(pred, sobel_y, padding=1)
+        
+        smoothness_loss = (grad_x.pow(2) + grad_y.pow(2)).mean()
+        
+        total_loss = (
+            self.reconstruction_weight * reconstruction_loss +
+            self.physics_weight * (physics_loss + 0.01 * smoothness_loss)
+        )
+        
+        return total_loss
+
+
+# Training utilities
+class DiffusionTrainer:
+    """Training utilities for the diffusion model."""
+    
+    def __init__(
+        self,
+        model: NeutronNet,
+        optimizer: torch.optim.Optimizer,
+        loss_fn: nn.Module,
+        device: torch.device
+    ):
+        self.model = model
+        self.optimizer = optimizer
+        self.loss_fn = loss_fn
+        self.device = device
+        
+    def train_step(
+        self,
+        batch: torch.Tensor,
+        accumulation_steps: Optional[int] = None
+    ) -> float:
+        """Perform single training step with gradient accumulation."""
+        if accumulation_steps is None:
+            accumulation_steps = self.model.accumulation_steps
+            
+        self.model.train()
+        self.optimizer.zero_grad()
+        
+        total_loss = 0.0
+        batch_size = batch.shape[0]
+        sub_batch_size = batch_size // accumulation_steps
+        
+        for i in range(accumulation_steps):
+            start_idx = i * sub_batch_size
+            end_idx = (i + 1) * sub_batch_size
+            sub_batch = batch[start_idx:end_idx].to(self.device)
+            
+            # Random timestep for each sample
+            t = torch.randint(
+                0, len(self.model.beta_schedule),
+                (sub_batch.shape[0],),
+                device=self.device
+            )
+            
+            # Forward diffusion
+            noisy_images, noise = self.model.forward_diffusion_step(sub_batch, t)
+            
+            # Predict noise
+            predicted_noise = self.model.reverse_diffusion_step(noisy_images, t)
+            
+            # Compute loss
+            loss = self.loss_fn(predicted_noise, sub_batch) / accumulation_steps
+            
+            # Backward pass
+            loss.backward()
+            total_loss += loss.item() * accumulation_steps
+        
+        # Update parameters
+        self.optimizer.step()
+        
+        return total_loss
+    
+    @torch.no_grad()
+    def validation_step(self, batch: torch.Tensor) -> float:
+        """Perform validation step."""
+        self.model.eval()
+        batch = batch.to(self.device)
+        
+        # Random timestep
+        t = torch.randint(
+            0, len(self.model.beta_schedule),
+            (batch.shape[0],),
+            device=self.device
+        )
+        
+        # Forward diffusion
+        noisy_images, noise = self.model.forward_diffusion_step(batch, t)
+        
+        # Predict noise
+        predicted_noise = self.model.reverse_diffusion_step(noisy_images, t)
+        
+        # Compute loss
+        loss = self.loss_fn(predicted_noise, batch)
+        
+        return loss.item()
+
+
+# Example usage
 if __name__ == "__main__":
-    # Usage example
-    input_shape = (256, 256, 1)
-    num_steps = 1000
-    beta_schedule = tf.linspace(0.0001, 0.02, num_steps)  # Example beta schedule
-
-    from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping, History
-    patience = 10
-    checkpoint_path = "/mnt/rafast/miler/some_model"
-    early_stopping = EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
-    checkpoint_callback = ModelCheckpoint(filepath=checkpoint_path, save_best_only=True, verbose=1)
-    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=patience, min_delta=0.001)
-    callbacks = [checkpoint_callback, reduce_lr, early_stopping]
-
-    # Create an instance of the NeutronNet
-    neutron_net = NeutronNet(input_shape, beta_schedule)
-
-    # Define an optimizer
-    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-
-    # Example of a single training step (you can loop through epochs and batches as needed)
-    images = tf.random.normal((64, 256, 256, 1))  # Example input
-    t = 0  # Example time step
-
-    neutron_net.train_model()
+    # Setup
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Create autoencoder config
+    ae_config = AutoEncoderConfig(
+        resolution=256,
+        in_channels=1,
+        ch=2,
+        out_ch=1,
+        ch_mult=[2, 4, 8, 16],
+        num_res_blocks=4,
+        z_channels=4,
+    )
+    
+    # Create beta schedule
+    scheduler = CosineBetaScheduler(1000)
+    beta_schedule = scheduler.get_schedule()
+    
+    # Create model
+    model = NeutronNet(ae_config, beta_schedule, accumulation_steps=4)
+    model.to(device)
+    
+    # Create optimizer and loss
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_fn = PhysicsConstraintLoss()
+    
+    # Create trainer
+    trainer = DiffusionTrainer(model, optimizer, loss_fn, device)
+    
+    # Test training step
+    batch = torch.randn(8, 1, 256, 256)
+    loss = trainer.train_step(batch)
+    print(f"Training loss: {loss:.4f}")
+    
+    # Test denoising
+    noisy_img = torch.randn(1, 1, 256, 256, device=device)
+    timesteps = get_schedule(50, 256)
+    denoised_img = denoise(model, noisy_img, timesteps, device=device)
+    print(f"Denoised image shape: {denoised_img.shape}")
+    
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")

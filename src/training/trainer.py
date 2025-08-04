@@ -1,252 +1,427 @@
+# src/training/trainer_pytorch.py
 """
-Trainer module for neutron star diffusion.
-Migrated and cleaned up.
+PyTorch trainer for neutron star diffusion model.
 """
 
-# training.py
-from keras.optimizers import Adam
-from keras.losses import MeanSquaredError
-from keras.metrics import MeanAbsoluteError
-from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping, History
-from keras.models import Model
-
-import matplotlib.pyplot as plt
-from typing import Union, List, Callable, Tuple
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+import wandb
+from tqdm.auto import tqdm
+import os
+from pathlib import Path
+from typing import Dict, Optional, List, Any
 import numpy as np
+import matplotlib.pyplot as plt
+from dataclasses import dataclass
 
-from autoencoder import AutoEncoder, AutoEncoderParams
-from utils import load_random_data, plot_original_vs_reconstructed_griddata
+from ..models.diffusion_pytorch import NeutronNet, DiffusionTrainer
+from ..models.autoencoder_pytorch import AutoEncoderConfig
+from ..utils.physics_pytorch import validate_physics_constraints
 
-def train_autoencoder(
-    autoencoder: Model,
-    train_data: np.ndarray,
-    val_data: np.ndarray,
-    epochs: int = 20,
-    batch_size: int = 2,
-    callbacks: Callable = ModelCheckpoint
-) -> History:
-    """
-    This will change completey to an selfwritten trainer, which changes the input data
-    depending on the epoch. Like a diffusion model
-    """
-        # Train the autoencoder
-    history = autoencoder.fit(
-        x=train_data,
-        y=train_data,
-        epochs=epochs,
-        validation_data=(val_data, val_data),
-        callbacks=callbacks,
-        batch_size=batch_size,
-        verbose=1
-    )
 
-    return history
-
-def plot_training_curves(history, file_path: Union[str, None] = None) -> None:
-    """
-    Plots the training and validation loss curves from the training history and saves the plot.
-
-    Args:
-        history: The training history object returned by the model's fit method.
-                 This should contain the 'loss' and 'val_loss' attributes.
-        file_path (str, optional): The path where the plot image will be saved.
-                                   If not provided or None, the plot will be saved in the current working directory.
-                                   Defaults to None.
-
-    Returns:
-        None
-    """
-    # Create a new figure with specified size
-    plt.figure(figsize=(10, 6))
-
-    # Plot training loss
-    plt.plot(history.history['loss'], label='Training Loss')
-    plt.plot(history.history['val_loss'], label='Validation Loss')
-
-    # Add legend to the plot
-    plt.legend()
-    plt.title('Autoencoder Training Curves')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-
-    # Determine the file path to save the plot
-    if file_path is None:
-        # Set a default file path in the current working directory
-        file_path = "training_curves.png"
+@dataclass
+class TrainingConfig:
+    """Configuration for training."""
+    epochs: int = 100
+    learning_rate: float = 1e-3
+    batch_size: int = 8
+    accumulation_steps: int = 4
+    weight_decay: float = 1e-4
     
-    # Save the plot to the specified file path
-    plt.savefig(file_path)  # Save as PNG file or any other supported format
-    print(f"Plot saved to {file_path}")
-    plt.show()
-    plt.close()
-
-def train_for_random_data(
-        params: AutoEncoderParams,
-        data_shape: List[int], 
-        train_size = 100, 
-        val_size: int = 20,
-        epochs: int = 50, 
-        batch_size: int = 2,
-        checkpoint_path: str = "/mnt/rafast/miler/ae_checkpoints/"
-) -> None:
-    """
-    Trains an autoencoder model on randomly generated data.
-
-    Args:
-        params (AutoEncoderParams): Hyperparameters for configuring the AutoEncoder model.
-        data_shape (List[int, int, int]): The shape of the input data, typically in the format [height, width, channels].
-        train_size (int, optional): The number of training samples to generate. Defaults to 100.
-        val_size (int, optional): The number of validation samples to generate. Defaults to 20.
-        epochs (int, optional): The number of training epochs. Defaults to 50.
-        batch_size (int, optional): The number of samples per gradient update. Defaults to 2.
-        checkpoint_path (str, optional): File path to save the model checkpoints. Defaults to '/mnt/rafast/miler/ae_checkpoints/'.
-
-    Returns:
-        None: The function does not return anything. The training process is conducted, and plots are generated for 
-        the training curves and original vs. reconstructed data.
-
-    Details:
-        - The function creates an autoencoder model using the provided parameters (`params`).
-        - Random training and validation datasets are generated based on the `data_shape`, `train_size`, and `val_size`.
-        - The autoencoder is compiled with an Adam optimizer, MeanSquaredError loss function, and MeanAbsoluteError as a metric.
-        - Training is done using the provided `epochs`, `batch_size`, and a set of callbacks including model checkpointing, 
-          learning rate reduction on plateau, and early stopping.
-        - Training history is plotted to show the loss curves, and reconstructed vs. original data is visualized.
-    """
-    autoencoder = AutoEncoder(params=params)
+    # Scheduling
+    use_scheduler: bool = True
+    scheduler_patience: int = 10
+    scheduler_factor: float = 0.5
     
-    train_data, val_data = load_random_data(data_shape, train_size, val_size)
+    # Validation
+    validation_interval: int = 5
+    save_interval: int = 10
     
-    # history = train_autoencoder(autoencoder, train_data, val_data, epochs=epochs, batch_size=batch_size)
-    # Initialize optimizer, loss function, and metric function
-    optimizer = Adam(learning_rate=0.001)
-    loss_fn = MeanSquaredError()
-    metric_fn = MeanAbsoluteError()
-
-    # Compile the autoencoder
-    autoencoder.compile(optimizer=optimizer, loss=loss_fn, metrics=[metric_fn])
-
-    # Build the model with the specified input shape
-    autoencoder.build(input_shape=(batch_size, train_data.shape[1], train_data.shape[2], train_data.shape[3]))  # Adjust as needed
-
-    # Define callbacks
-    checkpoint_path = checkpoint_path
-    checkpoint_callback = ModelCheckpoint(filepath=checkpoint_path, save_best_only=True, verbose=1)
-    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_delta=0.001)
-    early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
-    callbacks = [checkpoint_callback, reduce_lr, early_stop]
-
-    # Train the autoencoder
-    history = autoencoder.fit(
-        x=train_data,
-        y=train_data,
-        epochs=epochs,
-        validation_data=(val_data, val_data),
-        callbacks=callbacks,
-        batch_size=batch_size,
-        verbose=1
-    )
+    # Logging
+    log_interval: int = 100
+    use_wandb: bool = False
+    use_tensorboard: bool = True
     
-    plot_training_curves(history)
+    # Paths
+    checkpoint_dir: str = "checkpoints"
+    log_dir: str = "logs"
+
+
+class NeutronStarTrainer:
+    """Main trainer class for neutron star diffusion model."""
     
-    plot_original_vs_reconstructed_griddata(autoencoder, val_data)
-    return None
-
-def add_noise_to_inputs(inputs: np.ndarray, noise_factor: float = 0.1) -> np.ndarray:
-    """
-    Adds Gaussian noise to the input data.
-
-    Args:
-        inputs (np.ndarray): Input data to which noise will be added.
-        noise_factor (float, optional): The factor by which to scale the noise. Defaults to 0.1.
-
-    Returns:
-        np.ndarray: The input data with added Gaussian noise.
-
-    Details:
-        - The function generates random noise from a normal distribution with mean 0 and standard deviation based on the `noise_factor`.
-        - The noise is added to the original input data to create a noisy version of the inputs.
-        - Noise is applied element-wise across all input samples.
-    """
-    noise = np.random.normal(loc=0.0, scale=noise_factor, size=inputs.shape)
-    return inputs + noise
-
-def train_until_plateau(
-        model: Model, 
-        train_data: Tuple[np.ndarray, np.ndarray], 
-        val_data: Tuple[np.ndarray, np.ndarray],
-        patience: int = 5, 
-        noise_factor: float = 0.1, 
-        max_noisy_iterations: int = 7, 
-        batch_size: int = 2, 
-        epochs_per_round: int = 10
-) -> List[History]:
-    """
-    Trains a model until validation loss plateaus, then adds noise to the input data and continues training.
-
-    Args:
-        model (tf.keras.Model): The TensorFlow/Keras model to be trained.
-        train_data (Tuple[np.ndarray, np.ndarray]): Tuple containing training data and labels (train_X, train_y).
-        val_data (Tuple[np.ndarray, np.ndarray]): Tuple containing validation data and labels (val_X, val_y).
-        patience (int, optional): Number of epochs with no improvement on validation loss before training stops. Defaults to 3.
-        noise_factor (float, optional): Scaling factor for the amount of Gaussian noise added to the input data. Defaults to 0.1.
-        max_noisy_iterations (int, optional): Maximum number of training rounds with noisy data. Defaults to 5.
-        batch_size (int, optional): Number of samples per gradient update during training. Defaults to 32.
-        epochs_per_round (int, optional): Number of epochs to train in each iteration before checking validation loss. Defaults to 10.
-
-    Returns:
-        None: The function doesn't return any value. The model is trained iteratively, and noise is added to the input data
-              when validation loss plateaus.
-
-    Details:
-        - The function trains the model on the provided `train_data` and `val_data` until the validation loss stops improving.
-        - When validation loss stops improving for `patience` epochs, noise is added to the training data using a Gaussian noise model.
-        - The process repeats for a maximum of `max_noisy_iterations` iterations.
-        - The training process uses EarlyStopping to monitor validation loss and stop training when it plateaus.
-        - A callback is used to restore the best model weights when validation loss does not improve after `patience` epochs.
-        - Noise is injected using the `add_noise_to_inputs` function, which perturbs the original training data.
-    """
-    
-    train_X = train_data
-    train_y = train_data
-    val_X = val_data
-    val_y = val_data
-    
-    checkpoint_path = "/mnt/rafast/miler/noisy_model"
-    # Use EarlyStopping to stop training if validation loss does not improve
-    early_stopping = EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
-    checkpoint_callback = ModelCheckpoint(filepath=checkpoint_path, save_best_only=True, verbose=1)
-    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=patience, min_delta=0.001)
-    callbacks = [checkpoint_callback, reduce_lr, early_stopping]
-
-    noisy_iteration = 0
-
-    history_list = []
-    while noisy_iteration <= max_noisy_iterations:
-        print(f"\n--- Training without noise, iteration {noisy_iteration + 1} ---")
-        print("train_X shape", train_X.shape)
-        print("val_X shape", val_X.shape)
-
-
-        # Train the model until validation loss no longer improves
-        history = model.fit(train_X, train_y, 
-                            validation_data=(val_X, val_y),
-                            epochs=epochs_per_round,
-                            batch_size=batch_size,
-                            callbacks=callbacks,
-                            verbose=1)
-
-        history_list.append(history)
-
-        if noisy_iteration == max_noisy_iterations:
-            break
-
-        # Add noise to the training data and repeat the training process
-        print(f"Adding noise to input data and retraining... (Iteration {noisy_iteration + 1})")
-        train_X = add_noise_to_inputs(train_X, noise_factor)
+    def __init__(
+        self,
+        model: NeutronNet,
+        config: TrainingConfig,
+        device: torch.device
+    ):
+        self.model = model
+        self.config = config
+        self.device = device
         
-        noisy_iteration += 1
+        # Setup optimizer
+        self.optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay
+        )
         
+        # Setup scheduler
+        if config.use_scheduler:
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode='min',
+                patience=config.scheduler_patience,
+                factor=config.scheduler_factor,
+                verbose=True
+            )
+        else:
+            self.scheduler = None
+        
+        # Setup loss function
+        from ..models.diffusion_pytorch import PhysicsConstraintLoss
+        self.loss_fn = PhysicsConstraintLoss()
+        
+        # Setup logging
+        self.setup_logging()
+        
+        # Training state
+        self.current_epoch = 0
+        self.best_val_loss = float('inf')
+        self.training_history = {
+            'train_loss': [],
+            'val_loss': [],
+            'learning_rate': []
+        }
+    
+    def setup_logging(self):
+        """Setup logging with tensorboard and wandb."""
+        # Create directories
+        Path(self.config.checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        Path(self.config.log_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Tensorboard
+        if self.config.use_tensorboard:
+            self.tb_writer = SummaryWriter(self.config.log_dir)
+        else:
+            self.tb_writer = None
+        
+        # Weights & Biases
+        if self.config.use_wandb:
+            wandb.init(
+                project="neutron-star-diffusion",
+                config=self.config.__dict__
+            )
+    
+    def train_epoch(self, train_loader: DataLoader) -> float:
+        """Train for one epoch."""
+        self.model.train()
+        total_loss = 0.0
+        num_batches = len(train_loader)
+        
+        pbar = tqdm(train_loader, desc=f"Epoch {self.current_epoch}")
+        
+        for batch_idx, batch in enumerate(pbar):
+            batch = batch.to(self.device)
+            
+            # Training step
+            loss = self.train_step(batch)
+            total_loss += loss
+            
+            # Logging
+            if batch_idx % self.config.log_interval == 0:
+                current_lr = self.optimizer.param_groups[0]['lr']
+                pbar.set_postfix({
+                    'loss': f"{loss:.4f}",
+                    'avg_loss': f"{total_loss / (batch_idx + 1):.4f}",
+                    'lr': f"{current_lr:.2e}"
+                })
+                
+                # Log to tensorboard
+                if self.tb_writer:
+                    step = self.current_epoch * num_batches + batch_idx
+                    self.tb_writer.add_scalar('train/batch_loss', loss, step)
+                    self.tb_writer.add_scalar('train/learning_rate', current_lr, step)
+                
+                # Log to wandb
+                if self.config.use_wandb:
+                    wandb.log({
+                        'train/batch_loss': loss,
+                        'train/learning_rate': current_lr,
+                        'epoch': self.current_epoch
+                    })
+        
+        avg_loss = total_loss / num_batches
+        return avg_loss
+    
+    def train_step(self, batch: torch.Tensor) -> float:
+        """Single training step with gradient accumulation."""
+        self.optimizer.zero_grad()
+        
+        total_loss = 0.0
+        batch_size = batch.shape[0]
+        sub_batch_size = max(1, batch_size // self.config.accumulation_steps)
+        
+        for i in range(self.config.accumulation_steps):
+            start_idx = i * sub_batch_size
+            end_idx = min((i + 1) * sub_batch_size, batch_size)
+            
+            if start_idx >= batch_size:
+                break
+                
+            sub_batch = batch[start_idx:end_idx]
+            
+            # Random timestep for each sample
+            t = torch.randint(
+                0, len(self.model.beta_schedule),
+                (sub_batch.shape[0],),
+                device=self.device
+            )
+            
+            # Forward diffusion
+            noisy_images, noise = self.model.forward_diffusion_step(sub_batch, t)
+            
+            # Predict noise
+            predicted_noise = self.model.reverse_diffusion_step(noisy_images, t)
+            
+            # Compute loss
+            loss = self.loss_fn(predicted_noise, sub_batch) / self.config.accumulation_steps
+            
+            # Backward pass
+            loss.backward()
+            total_loss += loss.item() * self.config.accumulation_steps
+        
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        
+        # Update parameters
+        self.optimizer.step()
+        
+        return total_loss
+    
+    @torch.no_grad()
+    def validate(self, val_loader: DataLoader) -> Dict[str, float]:
+        """Validate the model."""
+        self.model.eval()
+        total_loss = 0.0
+        num_batches = len(val_loader)
+        
+        for batch in tqdm(val_loader, desc="Validating"):
+            batch = batch.to(self.device)
+            
+            # Random timestep
+            t = torch.randint(
+                0, len(self.model.beta_schedule),
+                (batch.shape[0],),
+                device=self.device
+            )
+            
+            # Forward diffusion
+            noisy_images, noise = self.model.forward_diffusion_step(batch, t)
+            
+            # Predict noise
+            predicted_noise = self.model.reverse_diffusion_step(noisy_images, t)
+            
+            # Compute loss
+            loss = self.loss_fn(predicted_noise, batch)
+            total_loss += loss.item()
+        
+        avg_loss = total_loss / num_batches
+        
+        # Physics validation on a subset
+        physics_metrics = validate_physics_constraints(
+            self.model.model,  # Use the autoencoder part
+            batch[:min(10, batch.shape[0])].cpu().numpy()
+        )
+        
+        return {
+            'val_loss': avg_loss,
+            **physics_metrics
+        }
+    
+    def save_checkpoint(self, is_best: bool = False):
+        """Save model checkpoint."""
+        checkpoint = {
+            'epoch': self.current_epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
+            'best_val_loss': self.best_val_loss,
+            'training_history': self.training_history,
+            'config': self.config
+        }
+        
+        # Save regular checkpoint
+        checkpoint_path = Path(self.config.checkpoint_dir) / f"checkpoint_epoch_{self.current_epoch}.pt"
+        torch.save(checkpoint, checkpoint_path)
+        
+        # Save best model
+        if is_best:
+            best_path = Path(self.config.checkpoint_dir) / "best_model.pt"
+            torch.save(checkpoint, best_path)
+            print(f"Saved best model with validation loss: {self.best_val_loss:.4f}")
+    
+    def load_checkpoint(self, checkpoint_path: str):
+        """Load model checkpoint."""
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        if self.scheduler and checkpoint['scheduler_state_dict']:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        self.current_epoch = checkpoint['epoch']
+        self.best_val_loss = checkpoint['best_val_loss']
+        self.training_history = checkpoint['training_history']
+        
+        print(f"Loaded checkpoint from epoch {self.current_epoch}")
+    
+    def train(
+        self,
+        train_loader: DataLoader,
+        val_loader: Optional[DataLoader] = None
+    ):
+        """Main training loop."""
+        print(f"Starting training for {self.config.epochs} epochs")
+        print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        
+        for epoch in range(self.current_epoch, self.config.epochs):
+            self.current_epoch = epoch
+            
+            # Train epoch
+            train_loss = self.train_epoch(train_loader)
+            self.training_history['train_loss'].append(train_loss)
+            self.training_history['learning_rate'].append(
+                self.optimizer.param_groups[0]['lr']
+            )
+            
+            print(f"Epoch {epoch}: Train Loss = {train_loss:.4f}")
+            
+            # Validation
+            if val_loader and epoch % self.config.validation_interval == 0:
+                val_metrics = self.validate(val_loader)
+                val_loss = val_metrics['val_loss']
+                self.training_history['val_loss'].append(val_loss)
+                
+                print(f"Epoch {epoch}: Val Loss = {val_loss:.4f}")
+                
+                # Log validation metrics
+                if self.tb_writer:
+                    for key, value in val_metrics.items():
+                        self.tb_writer.add_scalar(f'val/{key}', value, epoch)
+                
+                if self.config.use_wandb:
+                    wandb.log({f'val/{k}': v for k, v in val_metrics.items()})
+                
+                # Update learning rate
+                if self.scheduler:
+                    self.scheduler.step(val_loss)
+                
+                # Save best model
+                if val_loss < self.best_val_loss:
+                    self.best_val_loss = val_loss
+                    self.save_checkpoint(is_best=True)
+            
+            # Log training metrics
+            if self.tb_writer:
+                self.tb_writer.add_scalar('train/epoch_loss', train_loss, epoch)
+            
+            if self.config.use_wandb:
+                wandb.log({'train/epoch_loss': train_loss, 'epoch': epoch})
+            
+            # Save checkpoint
+            if epoch % self.config.save_interval == 0:
+                self.save_checkpoint()
+        
+        print("Training completed!")
+        
+        # Close logging
+        if self.tb_writer:
+            self.tb_writer.close()
+        
+        if self.config.use_wandb:
+            wandb.finish()
+    
+    def plot_training_history(self, save_path: Optional[str] = None):
+        """Plot training history."""
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+        
+        # Loss plot
+        axes[0].plot(self.training_history['train_loss'], label='Train Loss')
+        if self.training_history['val_loss']:
+            val_epochs = list(range(0, len(self.training_history['train_loss']), 
+                                  self.config.validation_interval))
+            axes[0].plot(val_epochs, self.training_history['val_loss'], 
+                        label='Val Loss', marker='o')
+        axes[0].set_xlabel('Epoch')
+        axes[0].set_ylabel('Loss')
+        axes[0].set_title('Training Loss')
+        axes[0].legend()
+        axes[0].grid(True)
+        
+        # Learning rate plot
+        axes[1].plot(self.training_history['learning_rate'])
+        axes[1].set_xlabel('Epoch')
+        axes[1].set_ylabel('Learning Rate')
+        axes[1].set_title('Learning Rate Schedule')
+        axes[1].set_yscale('log')
+        axes[1].grid(True)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.show()
 
-    print("Training completed.")
-    return history_list
+
+# Example usage
+if __name__ == "__main__":
+    from ..models.diffusion_pytorch import CosineBetaScheduler
+    
+    # Setup device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    # Load data
+    train_loader, val_loader = load_neutron_star_data(
+        "/path/to/ml_data_pics.npy",
+        batch_size=8,
+        validation_split=0.1
+    )
+    
+    # Create model
+    ae_config = AutoEncoderConfig(
+        resolution=256,
+        in_channels=1,
+        ch=2,
+        out_ch=1,
+        ch_mult=[2, 4, 8, 16],
+        num_res_blocks=4,
+        z_channels=4,
+    )
+    
+    scheduler = CosineBetaScheduler(1000)
+    beta_schedule = scheduler.get_schedule()
+    
+    model = NeutronNet(ae_config, beta_schedule, accumulation_steps=4)
+    model.to(device)
+    
+    # Training config
+    training_config = TrainingConfig(
+        epochs=100,
+        learning_rate=1e-3,
+        batch_size=8,
+        use_wandb=False,
+        use_tensorboard=True
+    )
+    
+    # Create trainer and train
+    trainer = NeutronStarTrainer(model, training_config, device)
+    trainer.train(train_loader, val_loader)
+    
+    # Plot results
+    trainer.plot_training_history("training_history.png")
