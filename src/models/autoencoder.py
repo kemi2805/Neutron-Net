@@ -1,4 +1,4 @@
-# src/models/autoencoder_pytorch.py
+# src/models/autoencoder.py
 """
 PyTorch implementation of the AutoEncoder model for neutron star data.
 Converted from TensorFlow/Keras implementation.

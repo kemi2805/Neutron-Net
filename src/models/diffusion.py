@@ -1,4 +1,4 @@
-# src/models/diffusion_pytorch.py
+# src/models/diffusion.py
 """
 PyTorch implementation of the diffusion model for neutron star data.
 Converted from TensorFlow implementation.
@@ -12,7 +12,7 @@ import math
 from typing import Optional, List, Callable, Tuple
 from dataclasses import dataclass
 
-from .autoencoder_pytorch import AutoEncoder, AutoEncoderConfig
+from .autoencoder import AutoEncoder, AutoEncoderConfig
 
 
 class CosineBetaScheduler:

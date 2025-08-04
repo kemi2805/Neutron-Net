@@ -1,4 +1,4 @@
-# src/utils/visualization_pytorch.py
+# src/utils/visualization.py
 """
 Consolidated visualization module for neutron star diffusion in PyTorch.
 Migrated and cleaned up from TensorFlow version.

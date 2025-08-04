@@ -1,4 +1,4 @@
-# src/data/augmentation_pytorch.py
+# src/data/augmentation.py
 """
 PyTorch augmentation module for neutron star diffusion.
 Converted from TensorFlow/Keras implementation.

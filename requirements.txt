@@ -16,6 +16,7 @@ pandas
 scipy
 scikit-image
 scikit-learn
+h5py
 
 # Parallel Processing
 dask[distributed]
@@ -34,6 +35,7 @@ rich
 matplotlib
 seaborn
 plotly
+opencv-python-headless
 
 # Utilities
 tqdm

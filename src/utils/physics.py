@@ -1,4 +1,4 @@
-# src/utils/physics_pytorch.py
+# src/utils/physics.py
 """
 Physics validation utilities for neutron star models in PyTorch.
 Based on universal relations from neutron star research.

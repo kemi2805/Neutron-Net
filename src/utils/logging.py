@@ -1,3 +1,4 @@
+# src/utils/logging.py
 """
 Professional logging setup for neutron star diffusion project.
 """

@@ -1,3 +1,4 @@
+# src/data/processing.py
 """
 Processing module for neutron star diffusion.
 Migrated and cleaned up.

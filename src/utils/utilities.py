@@ -1,4 +1,4 @@
-# src/utils/utilities_pytorch.py
+# src/utils/utilities.py
 """
 Consolidated utilities module for neutron star diffusion in PyTorch.
 Migrated and cleaned up from TensorFlow version.

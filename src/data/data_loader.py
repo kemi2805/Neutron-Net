@@ -1,4 +1,4 @@
-# src/data/data_loader_pytorch.py
+# src/data/data_loader.py
 """
 PyTorch data loading utilities for neutron star diffusion.
 Converted from TensorFlow implementation.

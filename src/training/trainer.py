@@ -1,4 +1,4 @@
-# src/training/trainer_pytorch.py
+# src/training/trainer.py
 """
 PyTorch trainer for neutron star diffusion model.
 """
@@ -16,9 +16,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 
-from ..models.diffusion_pytorch import NeutronNet, DiffusionTrainer
-from ..models.autoencoder_pytorch import AutoEncoderConfig
-from ..utils.physics_pytorch import validate_physics_constraints
+from ..models.diffusion import NeutronNet, DiffusionTrainer
+from ..models.autoencoder import AutoEncoderConfig
+from ..utils.physics import validate_physics_constraints
 
 
 @dataclass
@@ -82,7 +82,7 @@ class NeutronStarTrainer:
             self.scheduler = None
         
         # Setup loss function
-        from ..models.diffusion_pytorch import PhysicsConstraintLoss
+        from ..models.diffusion import PhysicsConstraintLoss
         self.loss_fn = PhysicsConstraintLoss()
         
         # Setup logging
@@ -380,7 +380,7 @@ class NeutronStarTrainer:
 
 # Example usage
 if __name__ == "__main__":
-    from ..models.diffusion_pytorch import CosineBetaScheduler
+    from ..models.diffusion import CosineBetaScheduler
     
     # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

@@ -22,11 +22,11 @@ import matplotlib.pyplot as plt
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent / "src"))
 
-from src.models.autoencoder_pytorch import AutoEncoderConfig
-from src.models.diffusion_pytorch import NeutronNet, CosineBetaScheduler
-from src.data.data_loader_pytorch import load_neutron_star_data
-from src.training.trainer_pytorch import NeutronStarTrainer, TrainingConfig
-from src.utils.physics_pytorch import validate_physics_constraints, plot_physics_validation_results
+from src.models.autoencoder import AutoEncoderConfig
+from src.models.diffusion import NeutronNet, CosineBetaScheduler
+from src.data.data_loader import load_neutron_star_data
+from src.training.trainer import NeutronStarTrainer, TrainingConfig
+from src.utils.physics import validate_physics_constraints, plot_physics_validation_results
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
