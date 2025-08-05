@@ -1,10 +1,12 @@
-# benchmark/analyze_data.py
+# benchmark/physics_validation/analyze_data.py
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import argparse
+
 from src.utils.visualization import plot_grid_data, compare_distributions
 from src.utils.physics import validate_physics_constraints
+
 import seaborn as sns
 
 def analyze_neutron_star_data(data_path, output_dir='analysis_results'):

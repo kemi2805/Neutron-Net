@@ -77,7 +77,6 @@ class NeutronStarTrainer:
                 mode='min',
                 patience=config.scheduler_patience,
                 factor=config.scheduler_factor,
-                verbose=True
             )
         else:
             self.scheduler = None

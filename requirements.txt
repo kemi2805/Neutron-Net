@@ -1,3 +1,7 @@
+# From ITP GPU run:
+# pip install --extra-index-url https://download.pytorch.org/whl/rocm6.2 -r requirements.txt
+
+
 # Core ML Framework - PyTorch with ROCm support
 --extra-index-url https://download.pytorch.org/whl/rocm6.2
 torch
