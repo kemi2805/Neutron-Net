@@ -38,6 +38,9 @@ def load_config(config_path: str) -> Dict[str, Any]:
 
 def setup_device() -> torch.device:
     """Setup computing device."""
+    device = torch.device('cpu')
+    print("GPU on itp is broken, using CPU")
+    return device
     if torch.cuda.is_available():
         device = torch.device('cuda')
         print(f"Using CUDA device: {torch.cuda.get_device_name()}")
